@@ -18,20 +18,28 @@ def carregar_config():
     """Carrega a configuração do arquivo JSON"""
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            # Garante que ultima_data_processada seja um inteiro
+            if 'ultima_data_processada' in config:
+                config['ultima_data_processada'] = int(config['ultima_data_processada'])
+            return config
     else:
         # Configuração padrão
         config = {
             'ultima_pagina_processada': 0,
-            'ultima_data_processada': datetime.now().strftime('%Y%m%d')
+            'ultima_data_processada': int(datetime.now().strftime('%Y%m%d'))
         }
         salvar_config(config)
         return config
 
 def salvar_config(config):
     """Salva a configuração no arquivo JSON"""
+    # Faz uma cópia para não modificar o dicionário original
+    config_to_save = config.copy()
+    # Garante que os valores estão no formato correto
+    config_to_save['ultima_data_processada'] = str(config['ultima_data_processada'])
     with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=4)
+        json.dump(config_to_save, f, indent=4)
 
 # Funções principais
 def RequestAnvisa(page, url, maximo_tentativa=3):
@@ -355,7 +363,7 @@ def executar_bot_anvisa():
         return False
     
     # Verificar se já processamos este arquivo
-    if data_mais_recente <= int(ultima_data_processada):
+    if data_mais_recente <= ultima_data_processada:
         print(f"✅ Arquivo mais recente ({data_mais_recente}) já foi processado anteriormente ({ultima_data_processada})")
         return False
     
@@ -367,20 +375,30 @@ def executar_bot_anvisa():
     try:
         lista_anvisa = ProcessarTabelaListaAnvisa(link_mais_recente, data_mais_recente)
         
-        # Salvar no banco (com fallback local)
-        sucesso = SalvarnoBanco(lista_anvisa, data_mais_recente, pagina_mais_recente)
+        # Tenta salvar no banco
+        sucesso_banco = SalvarnoBanco(lista_anvisa, data_mais_recente, pagina_mais_recente)
         
-        if sucesso:
-            # Atualizar configuração apenas se salvou com sucesso
-            config['ultima_pagina_processada'] = pagina_mais_recente
-            config['ultima_data_processada'] = data_mais_recente
-            salvar_config(config)
+        # Se falhar ao salvar no banco, tenta salvar localmente
+        if not sucesso_banco:
+            sucesso_local = salvar_arquivo_local(lista_anvisa, data_mais_recente, pagina_mais_recente)
+            if sucesso_local:
+                print("Backup local realizado com sucesso!")
+            else:
+                print("Falha ao salvar localmente!")
+                return False
+        
+        # Atualiza a configuração independentemente de ter salvado no banco ou localmente
+        config['ultima_pagina_processada'] = pagina_mais_recente
+        config['ultima_data_processada'] = data_mais_recente
+        salvar_config(config)
+        
+        if sucesso_banco:
             print(f"✅ Página {pagina_mais_recente} processada com sucesso! Data: {data_mais_recente}")
         else:
             print(f"⚠️ Página {pagina_mais_recente} processada com salvamento local! Data: {data_mais_recente}")
         
         return True
-        
+            
     except Exception as ex:
         print(f'❌ Erro ao processar página {pagina_mais_recente}: {ex}')
         return False
